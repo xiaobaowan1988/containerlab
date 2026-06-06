@@ -79,7 +79,26 @@ start_node() {
 }
 for node in $NODES; do start_node "$node"; done
 
-echo "[4/4] Waiting for BGP sessions to establish (20s)..."
+echo "[4/4] Setting up external test node..."
+ip netns add external 2>/dev/null || true
+ip netns exec external ip link set lo up
+ip link add vlsp1exta type veth peer name vlsp1extb
+ip link set vlsp1exta netns spine1
+ip link set vlsp1extb netns external
+ip netns exec spine1   ip link set vlsp1exta name eth3
+ip netns exec external ip link set vlsp1extb name eth0
+ip netns exec spine1   ip addr add 192.168.100.1/24 dev eth3
+ip netns exec external ip addr add 192.168.100.2/24 dev eth0
+ip netns exec spine1   ip link set eth3 up
+ip netns exec external ip link set eth0 up
+# Return routes: external's /24 must be known by all nodes on the return path
+ip netns exec external ip route add 10.244.0.0/16   via 192.168.100.1
+ip netns exec worker1  ip route add 192.168.100.0/24 via 10.0.1.0
+ip netns exec worker2  ip route add 192.168.100.0/24 via 10.0.1.2
+ip netns exec tor1     ip route add 192.168.100.0/24 via 10.0.0.0
+ip netns exec tor2     ip route add 192.168.100.0/24 via 10.0.0.2
+
+echo "[5/5] Waiting for BGP sessions to establish (20s)..."
 sleep 20
 
 echo ""
