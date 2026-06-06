@@ -1,0 +1,57 @@
+name: k8s-bgp-lab
+
+mgmt:
+  network: clab
+  ipv4-subnet: 172.20.20.0/24
+
+topology:
+  nodes:
+    # Spine switch — AS 65000
+    spine1:
+      kind: linux
+      image: frrouting/frr:latest
+      binds:
+        - configs/spine1/frr.conf:/etc/frr/frr.conf
+        - configs/spine1/daemons:/etc/frr/daemons
+
+    # ToR switch 1 — AS 65001
+    tor1:
+      kind: linux
+      image: frrouting/frr:latest
+      binds:
+        - configs/tor1/frr.conf:/etc/frr/frr.conf
+        - configs/tor1/daemons:/etc/frr/daemons
+
+    # ToR switch 2 — AS 65002
+    tor2:
+      kind: linux
+      image: frrouting/frr:latest
+      binds:
+        - configs/tor2/frr.conf:/etc/frr/frr.conf
+        - configs/tor2/daemons:/etc/frr/daemons
+
+    # Kubernetes worker node 1 (simulated) — AS 65100
+    # Advertises pod CIDR 10.244.1.0/24  (Calico-style host BGP)
+    worker1:
+      kind: linux
+      image: frrouting/frr:latest
+      binds:
+        - configs/worker1/frr.conf:/etc/frr/frr.conf
+        - configs/worker1/daemons:/etc/frr/daemons
+
+    # Kubernetes worker node 2 (simulated) — AS 65101
+    # Advertises pod CIDR 10.244.2.0/24
+    worker2:
+      kind: linux
+      image: frrouting/frr:latest
+      binds:
+        - configs/worker2/frr.conf:/etc/frr/frr.conf
+        - configs/worker2/daemons:/etc/frr/daemons
+
+  links:
+    # Spine ↔ ToR uplinks
+    - endpoints: ["spine1:eth1", "tor1:eth1"]
+    - endpoints: ["spine1:eth2", "tor2:eth1"]
+    # ToR ↔ Worker downlinks
+    - endpoints: ["tor1:eth2", "worker1:eth1"]
+    - endpoints: ["tor2:eth2", "worker2:eth1"]
