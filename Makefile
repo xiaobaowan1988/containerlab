@@ -1,4 +1,5 @@
-.PHONY: deploy verify teardown bgp routes ping
+.PHONY: deploy verify teardown bgp routes ping \
+        ns-deploy ns-verify ns-teardown
 
 deploy:
 	bash scripts/deploy.sh
@@ -26,3 +27,13 @@ ping:
 	echo ""; \
 	echo "worker1 -> 10.244.2.1 (worker2 pod CIDR):"; \
 	docker exec k8s-bgp-lab-worker1 ping -c 3 10.244.2.1 2>/dev/null || true
+
+# ── Namespace-based lab (no Docker required) ─────────────────────────────────
+ns-deploy:
+	bash scripts/ns-deploy.sh
+
+ns-verify:
+	bash scripts/ns-verify.sh
+
+ns-teardown:
+	bash scripts/ns-teardown.sh
