@@ -14,21 +14,21 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 command -v ip &>/dev/null || die "iproute2 not found (apt install iproute2)"
 [[ -x "$FRRD/zebra" ]] || die "FRR not found (apt install frr)"
 
-echo "=== Namespace BGP Lab (spine / ToR / worker) ==="
+echo "=== Namespace BGP Lab (spine / ToR / worker / external) ==="
 
 # ── 1. Directories ────────────────────────────────────────────────────────────
 mkdir -p "$LAB_DIR"
-for node in $NODES; do install -d -o frr -g frr "$LAB_DIR/$node"; done
+for node in $NODES external; do install -d -o frr -g frr "$LAB_DIR/$node"; done
 
 # ── 2. Namespaces ─────────────────────────────────────────────────────────────
-echo "[1/4] Creating network namespaces..."
-for ns in $NODES; do
+echo "[1/5] Creating network namespaces..."
+for ns in $NODES external; do
     ip netns add "$ns" 2>/dev/null || true
     ip netns exec "$ns" ip link set lo up
 done
 
 # ── 3. Veth wiring ────────────────────────────────────────────────────────────
-echo "[2/4] Wiring veth pairs..."
+echo "[2/5] Wiring veth pairs..."
 # Short unique IDs so link names don't collide (Linux iface names max 15 chars)
 node_id() { case "$1" in spine1) echo sp1;; tor1) echo tr1;; tor2) echo tr2;; worker1) echo wk1;; worker2) echo wk2;; esac; }
 wire() {
@@ -44,13 +44,25 @@ wire() {
 }
 # topology: spine1 – tor1 – worker1
 #                  – tor2 – worker2
+#                  – external (AS65200, BGP peer)
 wire spine1 eth1  tor1    eth1   # vlsp1tr1a/b
 wire spine1 eth2  tor2    eth1   # vlsp1tr2a/b
 wire tor1   eth2  worker1 eth1   # vltr1wk1a/b
 wire tor2   eth2  worker2 eth1   # vltr2wk2a/b
 
+# external connects to spine1 on eth3 (manual link — no node_id helper)
+ip link add vlsp1exta type veth peer name vlsp1extb
+ip link set vlsp1exta netns spine1
+ip link set vlsp1extb netns external
+ip netns exec spine1   ip link set vlsp1exta name eth3
+ip netns exec external ip link set vlsp1extb name eth0
+ip netns exec spine1   ip addr add 192.168.100.1/24 dev eth3
+ip netns exec external ip addr add 192.168.100.2/24 dev eth0
+ip netns exec spine1   ip link set eth3 up
+ip netns exec external ip link set eth0 up
+
 # ── 4. FRR daemons ───────────────────────────────────────────────────────────
-echo "[3/4] Starting FRR daemons..."
+echo "[3/5] Starting FRR daemons (fabric nodes)..."
 start_node() {
     local node=$1
     local rd="$LAB_DIR/$node"
@@ -79,28 +91,15 @@ start_node() {
 }
 for node in $NODES; do start_node "$node"; done
 
-echo "[4/4] Setting up external test node..."
-ip netns add external 2>/dev/null || true
-ip netns exec external ip link set lo up
-ip link add vlsp1exta type veth peer name vlsp1extb
-ip link set vlsp1exta netns spine1
-ip link set vlsp1extb netns external
-ip netns exec spine1   ip link set vlsp1exta name eth3
-ip netns exec external ip link set vlsp1extb name eth0
-ip netns exec spine1   ip addr add 192.168.100.1/24 dev eth3
-ip netns exec external ip addr add 192.168.100.2/24 dev eth0
-ip netns exec spine1   ip link set eth3 up
-ip netns exec external ip link set eth0 up
-# Return routes: external's /24 must be known by all nodes on the return path
-ip netns exec external ip route add 10.244.0.0/16   via 192.168.100.1
-ip netns exec worker1  ip route add 192.168.100.0/24 via 10.0.1.0
-ip netns exec worker2  ip route add 192.168.100.0/24 via 10.0.1.2
-ip netns exec tor1     ip route add 192.168.100.0/24 via 10.0.0.0
-ip netns exec tor2     ip route add 192.168.100.0/24 via 10.0.0.2
+echo "[4/5] Starting FRR on external (AS 65200)..."
+start_node external
+# external advertises 192.168.100.0/24 into the fabric via BGP —
+# no static routes needed anywhere; every node learns it dynamically.
 
-echo "[5/5] Waiting for BGP sessions to establish (20s)..."
-sleep 20
+echo "[5/5] Waiting for all BGP sessions to establish (25s)..."
+sleep 25
 
 echo ""
 echo "Lab is up. Run:  make ns-verify"
 echo "Inspect a node:  bash scripts/ns-vtysh.sh spine1"
+echo "Inspect external: bash scripts/ns-vtysh.sh external"
