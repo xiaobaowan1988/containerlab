@@ -96,7 +96,41 @@ start_node external
 # external advertises 192.168.100.0/24 into the fabric via BGP —
 # no static routes needed anywhere; every node learns it dynamically.
 
-echo "[5/5] Waiting for all BGP sessions to establish (25s)..."
+echo "[5/6] Creating pod namespaces (Calico-style /32 + veth + proxy-neigh)..."
+# Each pod is a separate network namespace connected to its worker via veth.
+# The pod routes its default via 169.254.1.1 (link-scope, no subnet).
+# The host-side veth holds 169.254.1.1/32 and a /32 host route → pod.
+# This mirrors how Calico BGP actually wires pods to the fabric.
+
+setup_pod() {
+    local pod_ns=$1 worker_ns=$2 pod_ip=$3
+    local hlink="veth${pod_ns}h" plink="veth${pod_ns}p"
+
+    ip netns add "$pod_ns" 2>/dev/null || true
+    ip link add "$hlink" type veth peer name "$plink"
+    ip link set "$plink" netns "$pod_ns"
+    ip link set "$hlink" netns "$worker_ns"
+
+    # pod side: /32 address, default via 169.254.1.1
+    ip netns exec "$pod_ns" ip link set lo up
+    ip netns exec "$pod_ns" ip link set "$plink" name eth0
+    ip netns exec "$pod_ns" ip addr add "${pod_ip}/32" dev eth0
+    ip netns exec "$pod_ns" ip link set eth0 up
+    ip netns exec "$pod_ns" ip route add 169.254.1.1/32 dev eth0 scope link
+    ip netns exec "$pod_ns" ip route add default via 169.254.1.1
+
+    # host side: 169.254.1.1/32 as gateway + /32 host route to pod
+    ip netns exec "$worker_ns" ip link set "$hlink" up
+    ip netns exec "$worker_ns" ip addr add 169.254.1.1/32 dev "$hlink"
+    ip netns exec "$worker_ns" ip neighbor add proxy 169.254.1.1 dev "$hlink"
+    ip netns exec "$worker_ns" ip route add "${pod_ip}/32" dev "$hlink"
+
+    echo "  ✓ $pod_ns ($pod_ip) on $worker_ns"
+}
+setup_pod w1pod1 worker1 10.244.1.2
+setup_pod w2pod1 worker2 10.244.2.2
+
+echo "[6/6] Waiting for all BGP sessions to establish (25s)..."
 sleep 25
 
 echo ""

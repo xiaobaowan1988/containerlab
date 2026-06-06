@@ -108,5 +108,22 @@ check "worker1 pod 10.244.1.1 → external 192.168.100.2  [symmetric]" \
     ip netns exec worker1 ping -c 2 -W 2 -I 10.244.1.1 192.168.100.2
 
 echo ""
+echo "=== K8s Network Model: real pod namespaces (Calico-style veth + /32) ==="
+echo "    w1pod1 = 10.244.1.2/32  w2pod1 = 10.244.2.2/32"
+echo "    Path: pod→(veth/proxy-neigh 169.254.1.1)→worker→(BGP)→worker→(host-route /32)→pod"
+
+check "w1pod1 → w2pod1 cross-node, no NAT  [TTL=59, 5 hops]" \
+    ip netns exec w1pod1 ping -c 2 -W 2 10.244.2.2
+
+check "w2pod1 → w1pod1 cross-node, no NAT  [TTL=59, 5 hops]" \
+    ip netns exec w2pod1 ping -c 2 -W 2 10.244.1.2
+
+check "external → w1pod1 (BGP /24 → worker host-route /32 → pod)" \
+    ip netns exec external ping -c 2 -W 2 10.244.1.2
+
+check "w1pod1 → external, pod IP preserved as src (no NAT)" \
+    ip netns exec w1pod1 ping -c 2 -W 2 192.168.100.2
+
+echo ""
 echo "=== Result: ${PASS} passed, ${FAIL} failed ==="
 [[ $FAIL -eq 0 ]]
